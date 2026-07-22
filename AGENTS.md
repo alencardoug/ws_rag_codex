@@ -27,9 +27,10 @@ Build a professional, secure and testable Agentic RAG application using FastAPI,
 
 ## Git authorization and safety
 
-The repository owner pre-authorizes commands whose command line starts with
-`git add`, without requiring a new confirmation each time, provided all of the
-following checks are satisfied first:
+The repository owner pre-authorizes routine, non-destructive Git commands,
+including status inspection, diff, log, add, commit, fetch, pull, push, branch
+inspection and remote inspection, without requiring a new confirmation each
+time. Before staging or publishing changes, all of the following checks apply:
 
 - inspect `git status` and the candidate paths;
 - respect `.gitignore` and do not force-add ignored files;
@@ -39,6 +40,12 @@ following checks are satisfied first:
 - review the staged diff and file sizes before committing;
 - stop and ask the owner if a candidate file is sensitive, unexpectedly large,
   ignored but apparently required, or otherwise ambiguous.
+
+This standing authorization does not waive destructive-action safeguards.
+Commands that discard or rewrite work or published history—including destructive
+`reset`, `clean`, forced checkout/restore, branch or tag deletion, history
+rewrites and force-push—require target validation and explicit confirmation when
+the requested operation is not already unambiguously authorized by the user.
 
 Create cohesive commits at relevant milestones and push completed, validated
 work to the configured upstream as already authorized by the owner.
