@@ -1,12 +1,12 @@
 # Proposta melhorada — Agentic RAG seguro, testável e operacional
 
-**Projeto de origem:** `02-rag/09-rag-production`  
+**Natureza do projeto:** implementação nova, orientada por esta especificação
 **Data da proposta:** 22 de julho de 2026  
-**Princípio central:** evoluir a implementação existente sem descaracterizar seu propósito educacional e funcional
+**Princípio central:** construir uma aplicação profissional de Agentic RAG, publicável e operacional, sem complexidade distribuída desnecessária
 
-## Premissa de preservação
+## Premissas do produto
 
-A versão melhorada continua sendo uma aplicação de **Agentic RAG** que:
+A aplicação será um **Agentic RAG** que:
 
 - recebe documentos;
 - extrai, divide e indexa seus conteúdos;
@@ -18,7 +18,22 @@ A versão melhorada continua sendo uma aplicação de **Agentic RAG** que:
 - oferece uma interface web simples;
 - integra observabilidade de LLM com Langfuse.
 
-Não se propõe trocar a solução por outra arquitetura, outro banco vetorial ou outro framework de agentes sem necessidade. A proposta transforma o protótipo em um **monólito modular de referência**, suficientemente robusto para estudo, portfólio, demonstração online e posterior evolução.
+Não existe dependência de um projeto anterior. A solução será construída do zero como um **monólito modular profissional**, suficientemente robusto para portfólio, publicação online e evolução posterior. A stack pode evoluir quando houver uma razão técnica mensurável, sem introduzir Kubernetes ou microsserviços por padrão.
+
+## Decisões consolidadas
+
+- PostgreSQL é o catálogo transacional de coleções, documentos, versões, estados de ingestão e versão ativa.
+- Qdrant armazena chunks, embeddings e payloads necessários ao retrieval; não é o catálogo administrativo.
+- `document_id` representa a identidade lógica estável do documento.
+- `content_sha256` identifica o conteúdo e garante idempotência.
+- `version_id` identifica uma versão concreta do documento.
+- Uma nova versão só se torna visível após processamento, persistência e validação completos.
+- Exclusão de documento é física no PostgreSQL e no Qdrant, com confirmação explícita e registro de auditoria sem conteúdo sensível.
+- O chat suporta providers independentes: OpenAI, Maritaca e Hugging Face Inference Providers.
+- Metadatação possui dois modos: determinístico, sem LLM, e assistido por LLM com fallback determinístico.
+- Respostas distinguem evidência da base documental, conhecimento geral do modelo e resultados de busca web.
+- A primeira publicação na GCP usa uma VM do Compute Engine executando um único Docker Compose. Cloud Run e Cloud SQL são caminhos posteriores, não requisitos do MVP.
+- Em publicação pública, a interface não solicita nem armazena credenciais administrativas ou de providers. Segredos pertencem ao servidor.
 
 ---
 
@@ -43,8 +58,11 @@ A versão melhorada será uma aplicação:
 |---|---|
 | FastAPI | Mantido como API e servidor do frontend |
 | LangGraph | Mantido como runtime do fluxo agêntico |
-| OpenAI | Mantida para chat e embeddings |
+| OpenAI | Provider padrão de chat e embeddings |
+| Maritaca | Provider opcional de chat, especializado em português |
+| Hugging Face | Provider opcional de chat para modelos abertos hospedados |
 | Qdrant | Mantido como banco vetorial |
+| PostgreSQL | Catálogo transacional e controle de versões |
 | Langfuse | Mantido como integração opcional de observabilidade |
 | PyMuPDF | Mantido como extrator principal de PDF |
 | Interface web simples | Mantida, separada em arquivos e servida na mesma origem |
@@ -56,10 +74,10 @@ A versão melhorada será uma aplicação:
 
 1. O código passa a ter camadas claras: API, serviços, domínio, grafo, documentos e integrações.
 2. Clientes externos deixam de ser globais e passam a usar lifespan e injeção.
-3. Rotas administrativas passam a exigir credencial administrativa.
-4. Chat e administração recebem permissões distintas.
+3. Rotas administrativas deixam de existir no perfil público.
+4. Chat público e operação administrativa usam perfis de execução distintos.
 5. Arquivos e histórico passam a ter limites e validação.
-6. Documentos recebem identidade por hash e versionamento.
+6. Documentos recebem identidade lógica estável, checksum de conteúdo e versionamento.
 7. Atualização deixa de apagar o conteúdo válido antes de preparar o novo.
 8. Resultados de retrieval e citações passam a ser estruturados.
 9. Conteúdo recuperado e anexado passa a ser tratado explicitamente como não confiável.
@@ -89,7 +107,7 @@ A versão melhorada será uma aplicação:
 │ agente e tools        │ PDF/chunk/metadata    │ logs/Langfuse │
 ├───────────────────────┴───────────┬───────────┴──────────────┤
 │ Integrações                       │                           │
-│ OpenAI                            │ Qdrant                    │
+│ OpenAI • Maritaca • Hugging Face │ Qdrant • PostgreSQL       │
 └───────────────────────────────────┴───────────────────────────┘
 ```
 
@@ -104,7 +122,7 @@ A recomendação é um **monólito modular**, porque:
 - mantém um único deploy;
 - oferece fronteiras que podem ser separadas futuramente.
 
-Não se recomenda iniciar com microsserviços, Kubernetes, broker e múltiplos bancos. Esses elementos só devem ser introduzidos por demanda comprovada.
+Não se recomenda iniciar com microsserviços, Kubernetes, broker ou armazenamentos adicionais além de PostgreSQL e Qdrant. Esses elementos só devem ser introduzidos por demanda comprovada.
 
 ---
 
@@ -112,27 +130,28 @@ Não se recomenda iniciar com microsserviços, Kubernetes, broker e múltiplos b
 
 ## 2.1. Autenticação e autorização
 
-### Versão inicial melhorada
+### Versão inicial publicável
 
-Adotar duas credenciais independentes:
+Credenciais da OpenAI, Maritaca e Hugging Face são segredos exclusivos do servidor. Elas entram por `.env` não versionado no desenvolvimento, por Docker secrets quando disponível e pelo Secret Manager na GCP. O navegador nunca recebe nem solicita essas credenciais.
 
-- `CHAT_API_KEY`: acesso ao chat;
-- `ADMIN_API_KEY`: acesso a coleções e documentos.
+O MVP não usa uma chave administrativa compartilhada. Em execução pública:
 
-Regras:
+- chat pode ser público, com rate limit, quota e proteção contra abuso;
+- rotas administrativas e de ingestão ficam desabilitadas no listener público;
+- o operador administra por CLI dentro do container, SSH/IAP e acesso local autenticado à VM;
+- uma evolução pode usar Identity-Aware Proxy ou OIDC sem alterar os serviços de domínio.
 
-- credenciais somente por header;
-- comparação em tempo constante;
-- ausência ou erro retornam resposta genérica;
-- endpoints administrativos nunca ficam públicos;
-- logs não registram chaves;
-- documentação não contém segredos reais.
+Em desenvolvimento local, rotas administrativas podem ser habilitadas explicitamente e limitadas a loopback/rede confiável. O backend nunca deve interpretar a ausência de autenticação como autorização administrativa.
 
-Essa solução é adequada ao objetivo de portfólio e demonstração controlada.
+| Perfil | Interface pública | Ingestão/administração |
+|---|---|---|
+| `development` | local | habilitada para desenvolvimento |
+| `public` | chat e leitura permitida | não registrada pela aplicação |
+| `operator` | somente loopback/túnel SSH/IAP | habilitada sem expor credenciais de provider ao browser |
 
 ### Caminho de evolução
 
-Quando houver usuários reais:
+Quando houver usuários administrativos via navegador:
 
 - substituir API keys por OIDC/OAuth 2.1;
 - validar JWT;
@@ -140,7 +159,7 @@ Quando houver usuários reais:
 - associar coleções a tenant ou usuário;
 - aplicar autorização por recurso.
 
-API key não deve ser apresentada como multi-tenancy.
+Credenciais de providers não são credenciais de usuário e nunca devem ser usadas para autenticar administração.
 
 ## 2.2. Correção de XSS
 
@@ -263,14 +282,15 @@ Detalhes técnicos ficam somente no log, submetidos a redaction.
 
 Novo fluxo:
 
-1. calcular `document_id` a partir do hash ou gerar ID estável;
-2. criar `version_id`;
-3. processar e validar todo o documento;
-4. gerar embeddings;
-5. gravar os pontos da nova versão;
-6. validar a contagem;
-7. marcar a nova versão como ativa;
-8. remover a antiga em etapa posterior ou mantê-la por retenção curta.
+1. localizar ou gerar o `document_id` lógico e estável;
+2. calcular `content_sha256` e tratar conteúdo idêntico de forma idempotente;
+3. criar `version_id` para o conteúdo novo;
+4. processar e validar todo o documento;
+5. gerar embeddings;
+6. gravar no Qdrant os pontos ainda não visíveis;
+7. validar a contagem;
+8. em transação PostgreSQL, apontar o documento para a nova versão ativa;
+9. remover fisicamente os chunks da versão anterior após a troca bem-sucedida.
 
 Em Qdrant, pontos devem ter IDs determinísticos, por exemplo:
 
@@ -279,6 +299,8 @@ hash(collection + document_id + version_id + page + chunk_index)
 ```
 
 Isso melhora idempotência.
+
+O retrieval primeiro resolve no PostgreSQL a versão ativa e então filtra o Qdrant por `document_id` e `version_id`. Assim, a ativação não depende de alterar o payload de todos os chunks de forma pseudoatômica. Chunks órfãos de uma falha anterior são invisíveis e podem ser removidos por reconciliação.
 
 ## 2.10. Privacidade e Langfuse
 
@@ -304,6 +326,14 @@ Em produção:
 - fixar a versão da imagem;
 - definir persistência;
 - criar health check.
+
+## 2.12. Segredos e publicação inicial na GCP
+
+No desenvolvimento, `.env` é permitido desde que esteja ignorado pelo Git e tenha permissões locais restritas. O Compose aceita também o padrão `*_FILE` para Docker secrets.
+
+Na GCP, a VM usa uma service account de privilégio mínimo para ler versões específicas no Secret Manager, sem baixar chave JSON. O bootstrap materializa os segredos somente em arquivos temporários montados nos containers, com permissões restritas. PostgreSQL e Qdrant não publicam portas; apenas o proxy HTTPS publica 80/443. Administração ocorre por túnel via IAP/SSH, não por endpoint aberto na internet.
+
+Essa topologia prioriza simplicidade operacional: uma VM, um persistent disk e um Docker Compose. Backups, restore testado, atualização da imagem e remoção dos recursos que geram cobrança fazem parte da Entrega B.
 
 ---
 
@@ -398,7 +428,7 @@ Validar invariantes, por exemplo:
 
 - `MAX_CHUNK_OVERLAP < MAX_CHUNK_SIZE`;
 - pelo menos uma origem explícita quando CORS for habilitado;
-- chave administrativa diferente da chave de chat;
+- configuração de produção não pode habilitar o perfil administrativo público;
 - OpenAI obrigatória apenas nos modos que usam a integração real.
 
 ## 3.5. Async e concorrência
@@ -417,20 +447,33 @@ Validar invariantes, por exemplo:
 
 ```json
 {
-  "answer": "Texto da resposta",
-  "citations": [
+  "sections": [
     {
-      "document_id": "doc_...",
-      "source": "arquivo.pdf",
-      "page": 3,
-      "chunk_id": "chunk_...",
-      "score": 0.82
+      "kind": "retrieval",
+      "text": "Resposta fundamentada nos documentos.",
+      "citations": [
+        {
+          "document_id": "doc_...",
+          "source": "arquivo.pdf",
+          "page": 3,
+          "chunk_id": "chunk_...",
+          "score": 0.82
+        }
+      ]
+    },
+    {
+      "kind": "general_knowledge",
+      "text": "Complemento baseado no conhecimento geral do modelo.",
+      "citations": []
     }
   ],
   "request_id": "req_...",
-  "retrieval_used": true
+  "retrieval_used": true,
+  "web_search_used": false
 }
 ```
+
+Cada seção declara sua proveniência: `retrieval`, `general_knowledge` ou `web_search`. Citações documentais são montadas deterministicamente a partir dos chunks recuperados. Uma seção de busca web contém URLs e títulos realmente retornados pela ferramenta; conhecimento geral sem fonte externa não deve receber uma citação inventada.
 
 ### Resposta de ingestão
 
@@ -615,7 +658,7 @@ Quando retrieval não atingir score ou não houver trechos relevantes:
 
 ## 4.4. Filtros de metadados controlados
 
-Reintroduzir os filtros previstos no modelo original, mas com allowlist:
+Disponibilizar filtros com allowlist:
 
 - classificação;
 - documento;
@@ -697,11 +740,27 @@ Até lá, ingestão assíncrona limitada no processo é suficiente para o objeti
 | LangGraph | Manter | É parte central da proposta agêntica |
 | langchain-core | Manter | Mensagens e tools |
 | langchain-openai | Declarar e manter | Integração efetivamente usada |
-| qdrant-client | Manter | Banco vetorial original |
+| qdrant-client | Manter | Integração vetorial escolhida |
 | PyMuPDF | Manter | Extração de PDF consolidada |
 | python-multipart | Manter | Upload FastAPI |
 | Langfuse | Manter como opcional | Observabilidade de LLM |
 | tiktoken | Manter se usado | Limites e chunking por tokens |
+
+## 5.1.1. Providers e perfis de modelo
+
+O domínio usa protocolos próprios; nomes de modelos ficam em configuração e não espalhados pelo código.
+
+| Perfil | Provider/modelo inicial | Uso |
+|---|---|---|
+| Econômico OpenAI | `gpt-5-mini` | alto volume e prompts bem definidos |
+| Intermediário OpenAI | `gpt-5.6-terra` | melhor equilíbrio entre capacidade e custo |
+| Econômico atual alternativo | `gpt-5.6-luna` | tarefas sensíveis a custo |
+| Português | Maritaca, modelo configurável da família Sabiá | português e contexto brasileiro |
+| Aberto hospedado | Hugging Face Inference Providers, model ID configurável | experimentação com modelos abertos |
+
+Maritaca e Hugging Face são providers distintos. Ambos podem oferecer interface compatível com APIs OpenAI, mas usam URLs, credenciais, capacidades e políticas próprias. Tool calling, structured output e busca web devem ser declarados como capabilities do adapter; o grafo não deve pressupor suporte uniforme.
+
+Embeddings são configurados separadamente do chat. Trocar o modelo de embeddings exige nova dimensão/coleção ou migração explícita; nunca se reutiliza silenciosamente uma coleção com vetores incompatíveis.
 
 ## 5.2. Bibliotecas removidas ou reduzidas
 
@@ -900,7 +959,7 @@ Somente após métricas:
 
 # Conclusão
 
-A versão melhorada preserva o valor didático e a identidade técnica do projeto original. O ganho principal não virá de adicionar mais frameworks, mas de:
+A aplicação busca qualidade profissional sem depender de uma implementação anterior. O ganho principal não virá de adicionar mais frameworks, mas de:
 
 1. corrigir contratos;
 2. proteger operações;

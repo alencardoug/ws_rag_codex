@@ -1,7 +1,7 @@
 # Plano de replicação para o Codex
 
-**Base:** evolução do projeto `02-rag/09-rag-production`  
-**Objetivo:** reconstruir a versão melhorada em tarefas pequenas, verificáveis e compatíveis com execução autônoma pelo Codex  
+**Base:** implementação nova orientada pela especificação do repositório
+**Objetivo:** construir um Agentic RAG profissional em tarefas pequenas, verificáveis e compatíveis com execução autônoma pelo Codex
 **Data:** 22 de julho de 2026
 
 ## 1. Estratégia de replicação
@@ -11,7 +11,7 @@ O Codex deve trabalhar em incrementos verticais pequenos.
 Regras do processo:
 
 1. criar contexto e estrutura antes do código funcional;
-2. manter o propósito original de Agentic RAG;
+2. manter o propósito definido de Agentic RAG;
 3. executar validações ao final de cada tarefa;
 4. não continuar sobre teste quebrado;
 5. não introduzir componentes opcionais antes do núcleo;
@@ -19,7 +19,19 @@ Regras do processo:
 7. registrar suposições;
 8. produzir resumo verificável de arquivos alterados e comandos executados.
 
-A primeira entrega deve funcionar sem Redis, worker, Kubernetes, autenticação OIDC, busca híbrida ou framework frontend.
+A primeira entrega deve funcionar sem Redis, worker, Kubernetes, busca híbrida ou framework frontend. PostgreSQL é o catálogo transacional e Qdrant é o armazenamento vetorial.
+
+## 1.1. Entregas
+
+### Entrega A — MVP funcional, seguro e publicável
+
+Inclui domínio, PostgreSQL, Qdrant, ingestão versionada, retrieval, chat multi-provider, API, frontend, testes e um Docker Compose executável localmente ou em uma única VM do Compute Engine.
+
+### Entrega B — Operacionalização completa
+
+Inclui observabilidade, backup e restore, hardening da VM, CI/CD, Secret Manager, avaliação RAG, documentação operacional e roteiro de migração opcional para Cloud Run e Cloud SQL.
+
+O término da Entrega A é um marco explícito. A Entrega B não deve bloquear a validação funcional do produto.
 
 ---
 
@@ -95,7 +107,12 @@ A primeira entrega deve funcionar sem Redis, worker, Kubernetes, autenticação 
 │           ├── __init__.py
 │           ├── langfuse.py
 │           ├── openai.py
+│           ├── maritaca.py
+│           ├── huggingface.py
+│           ├── postgres.py
 │           └── qdrant.py
+├── migrations/
+│   └── versions/
 ├── tests/
 │   ├── conftest.py
 │   ├── fixtures/
@@ -173,8 +190,8 @@ A primeira entrega deve funcionar sem Redis, worker, Kubernetes, autenticação 
 | `uv.lock` | Resolução reproduzível |
 | `Makefile` | Atalhos documentados, sem esconder os comandos reais |
 | `Dockerfile` | Imagem da API, multi-stage quando útil, usuário não root |
-| `compose.yaml` | Desenvolvimento local com API e Qdrant |
-| `compose.prod.yaml` | Exemplo endurecido, sem publicar Qdrant externamente |
+| `compose.yaml` | Desenvolvimento local com API, PostgreSQL e Qdrant |
+| `compose.prod.yaml` | Implantação em uma VM, com PostgreSQL e Qdrant privados |
 
 ## 2.2. API
 
@@ -237,7 +254,10 @@ A primeira entrega deve funcionar sem Redis, worker, Kubernetes, autenticação 
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `openai.py` | Fábricas/protocolos de modelo e embeddings |
+| `openai.py` | Adapter OpenAI para chat e embeddings |
+| `maritaca.py` | Adapter de chat Maritaca com API compatível |
+| `huggingface.py` | Adapter de chat para Hugging Face Inference Providers |
+| `postgres.py` | Catálogo transacional, sessões e unit of work |
 | `qdrant.py` | Repositório vetorial, índices e operações idempotentes |
 | `langfuse.py` | Handler opcional, redaction e fail-open |
 
@@ -275,20 +295,23 @@ The application ingests PDF and TXT documents, chunks and embeds their
 contents, stores vectors in Qdrant, and uses a LangGraph agent with a
 retrieval tool to answer questions with verifiable citations.
 
-Preserve the original core stack and purpose:
-FastAPI, LangGraph, OpenAI, Qdrant, Langfuse, PyMuPDF and a simple web UI.
+Use the selected core stack:
+FastAPI, LangGraph, PostgreSQL, Qdrant, OpenAI-compatible providers,
+Langfuse, PyMuPDF and a simple web UI.
 
 ## Scope for the first production-quality version
 
 Implement a modular monolith with:
 
 - versioned and idempotent document ingestion;
+- a transactional PostgreSQL catalog;
 - dense retrieval;
 - structured citations;
-- API-key protection for chat and administration;
+- public/admin deployment profiles without browser-held provider credentials;
 - strict resource limits;
 - safe handling of untrusted document content;
 - same-origin static frontend;
+- configurable OpenAI, Maritaca and Hugging Face chat providers;
 - tests, Docker, CI and documentation.
 
 Do not add Redis, background workers, Kubernetes, OIDC, multi-tenancy,
@@ -312,7 +335,8 @@ Dependency direction:
 
 These are mandatory:
 
-- Never expose collection or document administration without admin auth.
+- Never expose collection or document administration on the public listener.
+- Never request provider credentials in the browser.
 - Never log API keys, full document contents, embeddings or raw chat history.
 - Never return raw exception text to clients.
 - Never render model, user or server text with unsanitized innerHTML.
@@ -321,18 +345,18 @@ These are mandatory:
 - Validate collection names through an allowlist pattern and maximum length.
 - Enforce upload, page, chunk, history, query, top-k and timeout limits.
 - Keep Qdrant private in production.
-- Use constant-time comparison for API keys.
+- Keep provider credentials server-side and never request them in the UI.
 - Add a regression test for every security fix.
 
 ## Document identity and update rules
 
 - Calculate SHA-256 for every uploaded file.
-- Use a stable document_id and an explicit version_id.
+- Use a stable logical document_id, a content_sha256 and an explicit version_id.
 - Use deterministic point IDs.
 - Re-uploading identical content must be idempotent.
 - Never delete the active version before the replacement is completely
   processed and persisted.
-- Retrieval must filter for active versions.
+- Resolve the active version transactionally in PostgreSQL and filter Qdrant by it.
 - Create payload indexes for fields used in filters.
 
 ## RAG rules
@@ -472,15 +496,23 @@ At minimum document:
 - APP_HOST
 - APP_PORT
 - LOG_LEVEL
-- OPENAI_API_KEY
 - OPENAI_CHAT_MODEL
 - OPENAI_METADATA_MODEL
 - OPENAI_EMBEDDING_MODEL
 - QDRANT_URL
 - QDRANT_API_KEY
 - QDRANT_COLLECTION_PREFIX
-- CHAT_API_KEY
-- ADMIN_API_KEY
+- PUBLIC_CHAT_ENABLED
+- PUBLIC_ADMIN_ENABLED
+- CHAT_PROVIDER
+- METADATA_MODE
+- DATABASE_URL
+- OPENAI_API_KEY
+- MARITACA_API_KEY
+- HUGGINGFACE_TOKEN
+- OPENAI_API_KEY_FILE
+- MARITACA_API_KEY_FILE
+- HUGGINGFACE_TOKEN_FILE
 - ALLOWED_ORIGINS
 - LANGFUSE_ENABLED
 - LANGFUSE_PUBLIC_KEY
@@ -614,34 +646,17 @@ Implementar:
 - erro interno não vaza detalhes;
 - testes unitários e API passam.
 
-## Tarefa 3 — Integrações substituíveis
-
-Implementar protocolos e adapters:
-
-- chat model;
-- embeddings;
-- Qdrant;
-- Langfuse opcional.
-
-Criar fakes para testes.
-
-**Pronto quando:**
-
-- clientes são abertos/fechados pelo lifespan;
-- teste unitário não faz rede;
-- Langfuse desabilitado não altera o chat;
-- timeout é configurável.
-
-## Tarefa 4 — Domínio e contrato documental
+## Tarefa 3 — Domínio e contrato documental
 
 Implementar:
 
 - `DocumentId`;
 - `VersionId`;
 - `ChunkId`;
-- hash;
+- `content_sha256`;
 - payload;
 - citações;
+- blocos de resposta por origem;
 - schemas;
 - exceções.
 
@@ -651,6 +666,25 @@ Implementar:
 - payload é validado;
 - schemas não importam SDKs externos;
 - documentação de dados é atualizada.
+
+## Tarefa 4 — Integrações substituíveis
+
+Implementar protocolos, adapters e fakes para:
+
+- OpenAI, Maritaca e Hugging Face como providers de chat;
+- OpenAI e provider configurável de embeddings;
+- PostgreSQL;
+- Qdrant;
+- Langfuse opcional;
+- busca web opcional com resultados citáveis.
+
+**Pronto quando:**
+
+- clientes são abertos/fechados pelo lifespan;
+- provider é selecionado por configuração, nunca por entrada arbitrária do cliente;
+- teste unitário não faz rede;
+- Langfuse e busca web desabilitados não alteram o núcleo do chat;
+- timeout é configurável por integração.
 
 ## Tarefa 5 — Extração e chunking seguros
 
@@ -662,7 +696,8 @@ Implementar:
 - páginas;
 - chunking;
 - contagem;
-- metadatação com fallback.
+- metadatação determinística;
+- metadatação assistida por LLM, opcional, com fallback determinístico.
 
 **Pronto quando:**
 
@@ -672,24 +707,32 @@ Implementar:
 - fixture de injection é tratado como texto;
 - nenhum teste usa OpenAI real.
 
-## Tarefa 6 — Repositório Qdrant
+## Tarefa 6 — Persistência PostgreSQL e Qdrant
 
-Implementar:
+Implementar migrations e catálogo PostgreSQL para:
+
+- coleções;
+- documentos lógicos;
+- versões e estados;
+- checksum único por escopo;
+- ponteiro transacional de versão ativa;
+- auditoria técnica de exclusão.
+
+Implementar no Qdrant:
 
 - criação da coleção dense;
 - payload indexes;
 - upsert;
 - consulta;
-- ativação de versão;
 - exclusão;
-- listagem;
 - verificação de readiness.
 
 **Pronto quando:**
 
-- integração com Qdrant passa;
+- integrações com PostgreSQL e Qdrant passam;
 - coleção não cria vetor esparso;
-- filtros usam versão ativa;
+- retrieval resolve no PostgreSQL a versão ativa e filtra por ela no Qdrant;
+- falha não consegue produzir duas versões ativas no catálogo;
 - recursos inexistentes têm comportamento consistente.
 
 ## Tarefa 7 — Ingestão idempotente e atualização segura
@@ -698,10 +741,11 @@ Implementar:
 
 - checksum;
 - detecção de conteúdo repetido;
-- versão;
+- `document_id` lógico estável e `version_id` explícito;
 - pontos determinísticos;
 - preparação antes de ativação;
-- limpeza segura.
+- ativação transacional no PostgreSQL;
+- exclusão física e reconciliação de chunks órfãos.
 
 **Pronto quando:**
 
@@ -738,6 +782,8 @@ Implementar:
 - workflow;
 - limite de chamadas;
 - resposta de evidência insuficiente;
+- separação entre blocos `retrieval`, `general_knowledge` e `web_search`;
+- busca web opcional, com allowlist de ferramenta e citações verificadas;
 - arquivo temporário como dado não confiável.
 
 **Pronto quando:**
@@ -746,24 +792,27 @@ Implementar:
 - pergunta documental aciona retrieval;
 - conteúdo “ignore instruções anteriores” não muda a regra de sistema;
 - grafo termina dentro do limite;
-- citações permanecem verificáveis.
+- citações permanecem verificáveis;
+- conhecimento geral nunca é apresentado como evidência documental;
+- resultado web cita somente URLs retornadas pela ferramenta.
 
-## Tarefa 10 — API e autorização
+## Tarefa 10 — API e exposição segura
 
 Implementar rotas versionadas:
 
 - chat;
 - coleções;
 - documentos;
-- autenticação;
-- autorização;
+- separação dos listeners/perfis público e administrativo;
 - limites;
 - respostas.
 
 **Pronto quando:**
 
-- admin sem chave recebe 401;
-- chave de chat não executa administração;
+- perfil público não registra nem expõe rotas administrativas;
+- navegador não recebe nem solicita chave de provider;
+- perfil administrativo só inicia em loopback ou rede explicitamente confiável;
+- configuração de produção falha ao iniciar se `PUBLIC_ADMIN_ENABLED=true`;
 - upload excessivo recebe 413;
 - exceções usam envelope;
 - OpenAPI reflete os contratos.
@@ -791,6 +840,8 @@ Implementar:
 - teste de XSS não executa marcação;
 - não existe URL de API fixa.
 
+**Marco da Entrega A:** ao concluir a Tarefa 11, o MVP deve funcionar com PostgreSQL, Qdrant e providers fake; a execução real exige apenas a credencial do provider selecionado.
+
 ## Tarefa 12 — Observabilidade
 
 Implementar:
@@ -811,7 +862,7 @@ Implementar:
 - Qdrant indisponível deixa readiness não pronta;
 - Langfuse indisponível não derruba o chat.
 
-## Tarefa 13 — Containers e CI
+## Tarefa 13 — Containers, GCP Compute Engine e CI
 
 Criar:
 
@@ -819,7 +870,12 @@ Criar:
 - compose;
 - health checks;
 - usuário não root;
-- workflows.
+- workflows;
+- compose de produção com API pública e PostgreSQL/Qdrant somente em rede interna;
+- persistent disk, backup, restore e atualização documentados;
+- script/guia de bootstrap de uma VM do Compute Engine;
+- integração com Secret Manager sem arquivo de chave de service account;
+- proxy HTTPS, domínio, firewall restrito a 80/443 e administração por IAP/SSH.
 
 **Pronto quando:**
 
@@ -829,7 +885,7 @@ uv run python scripts/smoke_test.py
 docker compose down
 ```
 
-funciona e CI executa qualidade, testes, segurança e build.
+funciona e CI executa qualidade, testes, segurança e build. O guia da GCP deve levar uma pessoa sem experiência prévia da criação do projeto até HTTPS e smoke test, indicando custos e recursos que precisam ser removidos para interromper cobrança.
 
 ## Tarefa 14 — Avaliação e documentação final
 
@@ -859,7 +915,7 @@ Criar:
 - Python 3.13;
 - `uv`;
 - Docker Engine com Compose;
-- chave OpenAI para execução real;
+- credencial de ao menos um provider de chat para execução real;
 - Langfuse opcional.
 
 ## 6.2. Configuração local
@@ -871,10 +927,13 @@ cp .env.example .env
 Preencher ao menos:
 
 ```dotenv
+CHAT_PROVIDER=openai
 OPENAI_API_KEY=...
-CHAT_API_KEY=...
-ADMIN_API_KEY=...
+OPENAI_CHAT_MODEL=gpt-5.6-luna
+METADATA_MODE=deterministic
 ```
+
+Alternativas de chat incluem OpenAI, Maritaca e Hugging Face. `METADATA_MODE=deterministic` não consome LLM; `METADATA_MODE=llm` usa o provider/modelo configurado e sempre conserva fallback determinístico.
 
 Não versionar `.env`.
 
@@ -955,17 +1014,19 @@ docker compose down
 # 7. Prompt final pronto para colar no Codex
 
 ```text
-Você é o engenheiro responsável por replicar e evoluir um projeto de
-Agentic RAG. Trabalhe diretamente no repositório atual.
+Você é o engenheiro responsável por construir um projeto profissional de
+Agentic RAG do zero. Trabalhe diretamente no repositório atual.
 
 OBJETIVO
 
-Construir uma versão segura, testável e operacional do projeto original
-09-rag-production, preservando seu propósito e sua stack central:
+Construir uma aplicação segura, testável, publicável e operacional com a
+seguinte stack central:
 
 - FastAPI;
 - LangGraph;
-- OpenAI para chat e embeddings;
+- PostgreSQL como catálogo transacional;
+- OpenAI, Maritaca e Hugging Face como providers configuráveis de chat;
+- embeddings configuráveis separadamente;
 - Qdrant;
 - Langfuse opcional;
 - PyMuPDF;
@@ -975,10 +1036,10 @@ O produto deve ingerir PDF/TXT, gerar metadados e chunks, armazenar
 embeddings no Qdrant e responder perguntas usando um agente com ferramenta
 de retrieval e citações verificáveis.
 
-NÃO DESCARACTERIZE O PROJETO
+GUARDRAILS
 
 Não troque o banco vetorial, o runtime agêntico ou a API sem uma razão
-documentada. Não crie microsserviços. Na primeira versão, não adicione
+documentada. Não existe código original a preservar. Não crie microsserviços. Na primeira versão, não adicione
 Redis, worker, Kubernetes, OIDC, multi-tenancy, busca híbrida, reranking
 ou framework frontend.
 
@@ -1006,10 +1067,10 @@ ORDEM OBRIGATÓRIA
 Tarefa 0 — especificação, AGENTS.md, docs e árvore.
 Tarefa 1 — pyproject, uv.lock, pacote e ferramentas.
 Tarefa 2 — settings, logging, application factory, erros e health.
-Tarefa 3 — protocolos/adapters OpenAI, Qdrant e Langfuse, com fakes.
-Tarefa 4 — domínio, IDs, versões, chunks, payload e citações.
+Tarefa 3 — domínio, IDs, versões, chunks, payload e citações.
+Tarefa 4 — adapters PostgreSQL, Qdrant, providers e Langfuse, com fakes.
 Tarefa 5 — extração PDF/TXT, limites, chunking e metadados.
-Tarefa 6 — repositório Qdrant dense e payload indexes.
+Tarefa 6 — persistência PostgreSQL e Qdrant dense.
 Tarefa 7 — ingestão idempotente e atualização não destrutiva.
 Tarefa 8 — retrieval limitado, filtros e citações verificadas.
 Tarefa 9 — LangGraph, tool budget e proteção contra prompt injection.
@@ -1043,10 +1104,10 @@ Testes substituem OpenAI por fakes determinísticos.
 
 REQUISITOS DE SEGURANÇA
 
-- CHAT_API_KEY protege chat.
-- ADMIN_API_KEY protege coleções e documentos.
-- A chave de chat não pode administrar recursos.
-- Compare chaves em tempo constante.
+- Nunca solicite chaves de providers no navegador.
+- O perfil público não expõe administração ou ingestão.
+- O perfil administrativo só pode ser habilitado em loopback ou rede confiável.
+- Produção deve recusar `PUBLIC_ADMIN_ENABLED=true`.
 - Nunca registre chaves, conteúdo integral, embeddings ou histórico bruto.
 - Nunca retorne exceção bruta.
 - Nunca use innerHTML para conteúdo do usuário, modelo ou servidor.
@@ -1063,9 +1124,10 @@ REQUISITOS DE INGESTÃO
 - Use somente PyMuPDF para PDF.
 - Remova o pacote fitz e PyPDF2.
 - Calcule SHA-256.
-- Use document_id e version_id.
+- Use `document_id` lógico estável, `content_sha256` e `version_id`.
 - Use point IDs determinísticos.
 - Upload idêntico deve ser idempotente.
+- Ative a versão por ponteiro transacional no PostgreSQL.
 - Não apague versão ativa antes de persistir e validar a nova.
 - Crie payload indexes.
 - Use dense retrieval inicialmente.
@@ -1088,18 +1150,16 @@ CONTRATOS MÍNIMOS
 Resposta de chat:
 
 {
-  "answer": "...",
-  "citations": [
+  "sections": [
     {
-      "document_id": "...",
-      "source": "...",
-      "page": 1,
-      "chunk_id": "...",
-      "score": 0.0
+      "kind": "retrieval",
+      "text": "...",
+      "citations": []
     }
   ],
   "request_id": "...",
-  "retrieval_used": true
+  "retrieval_used": true,
+  "web_search_used": false
 }
 
 Resposta de ingestão:
