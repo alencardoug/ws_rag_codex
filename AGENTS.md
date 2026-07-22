@@ -25,6 +25,24 @@ Build a professional, secure and testable Agentic RAG application using FastAPI,
 - Do not make real provider calls in the normal test suite.
 - Record material decisions with an ADR.
 
+## Git authorization and safety
+
+The repository owner pre-authorizes commands whose command line starts with
+`git add`, without requiring a new confirmation each time, provided all of the
+following checks are satisfied first:
+
+- inspect `git status` and the candidate paths;
+- respect `.gitignore` and do not force-add ignored files;
+- do not stage secrets, credentials, `.env` files, private keys or sensitive data;
+- do not stage unexpectedly large files, generated datasets, model weights,
+  database volumes, caches or build artifacts;
+- review the staged diff and file sizes before committing;
+- stop and ask the owner if a candidate file is sensitive, unexpectedly large,
+  ignored but apparently required, or otherwise ambiguous.
+
+Create cohesive commits at relevant milestones and push completed, validated
+work to the configured upstream as already authorized by the owner.
+
 ## Completion report
 
 Report the task, changed files, decisions, commands actually executed, results, remaining risks and next task.
