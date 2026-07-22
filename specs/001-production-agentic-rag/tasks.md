@@ -6,17 +6,23 @@ Cada tarefa exige código, testes e documentação correspondentes. O relatório
 
 ### 0 — Governança e esqueleto
 
+Status: concluída em 2026-07-22.
+
 Criar `AGENTS.md`, documentos, diretórios sob demanda e especificação. Não criar árvores vazias.
 
 Aceite: links válidos, escopo explícito e tarefas rastreáveis.
 
 ### 1 — Projeto Python reproduzível
 
+Status: concluída em 2026-07-22.
+
 Configurar `pyproject.toml`, Python 3.13, `uv.lock`, pacote, Ruff, Mypy e Pytest.
 
 Aceite: sync, import, lint, type check e testes mínimos passam.
 
 ### 2 — Configuração e aplicação
+
+Status: próxima.
 
 Settings, invariantes, logging, request ID, factory, lifespan, erros e health inicial.
 

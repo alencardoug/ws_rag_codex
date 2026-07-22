@@ -68,4 +68,4 @@ Observabilidade, hardening, CI/CD, backup/restore, deployment GCP, evals e runbo
 
 ## Estado atual
 
-O repositório está na fase de planejamento. A implementação começa pela Tarefa 1; a Tarefa 0 fica concluída quando esta estrutura documental e seus links forem validados.
+As Tarefas 0 e 1 estão concluídas: governança documental e projeto Python reproduzível. A próxima etapa é a Tarefa 2, configuração e aplicação FastAPI mínima.

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Tools
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Environments and secrets
+.env
+.env.*
+!.env.example
+
+# IDE and operating system
+.idea/
+.vscode/
+.DS_Store
+
+# Local data
+data/
+qdrant_storage/
+postgres_data/

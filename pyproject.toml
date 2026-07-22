@@ -1,7 +1,73 @@
 [project]
-name = "ws-rag-codex"
+name = "rag-production"
 version = "0.1.0"
-description = "Add your description here"
+description = "Secure, testable, and operational Agentic RAG application"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+license = "MIT"
+authors = [{ name = "Doug Alencar" }]
+dependencies = [
+    "alembic",
+    "asyncpg",
+    "fastapi",
+    "httpx",
+    "langchain-core",
+    "langchain-openai",
+    "langfuse",
+    "langgraph",
+    "openai",
+    "pydantic-settings",
+    "pymupdf",
+    "python-multipart",
+    "qdrant-client",
+    "sqlalchemy[asyncio]",
+    "uvicorn[standard]",
+]
+
+[dependency-groups]
+dev = [
+    "bandit",
+    "mypy",
+    "pip-audit",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rag_production"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["A", "ASYNC", "B", "C4", "E", "F", "I", "N", "RUF", "S", "SIM", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+source = ["rag_production"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
